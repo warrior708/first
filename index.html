@@ -1,0 +1,1369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GESTURAL — Hand Tracking Visual Engine</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap');
+
+  :root {
+    --neon-cyan: #00f5ff;
+    --neon-pink: #ff006e;
+    --neon-purple: #8b00ff;
+    --neon-green: #39ff14;
+    --neon-orange: #ff6600;
+    --bg: #03000a;
+    --panel-bg: rgba(0, 245, 255, 0.04);
+    --panel-border: rgba(0, 245, 255, 0.15);
+    --text-dim: rgba(0, 245, 255, 0.5);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--neon-cyan);
+    font-family: 'Share Tech Mono', monospace;
+    overflow: hidden;
+    width: 100vw;
+    height: 100vh;
+    user-select: none;
+  }
+
+  /* ── Video + Canvas stack ── */
+  #video {
+    position: fixed; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: cover;
+    opacity: 0.18;
+    transform: scaleX(-1);
+    z-index: 0;
+  }
+
+  #canvas-main {
+    position: fixed; inset: 0;
+    width: 100%; height: 100%;
+    z-index: 1;
+  }
+
+  #canvas-skeleton {
+    position: fixed; inset: 0;
+    width: 100%; height: 100%;
+    z-index: 2;
+    pointer-events: none;
+  }
+
+  /* ── Scanline overlay ── */
+  body::after {
+    content: '';
+    position: fixed; inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,0.08) 2px,
+      rgba(0,0,0,0.08) 4px
+    );
+    z-index: 3;
+    pointer-events: none;
+  }
+
+  /* ── UI Layer ── */
+  #ui {
+    position: fixed; inset: 0;
+    z-index: 10;
+    pointer-events: none;
+  }
+
+  /* ── Header ── */
+  #header {
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    padding: 18px 28px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: linear-gradient(180deg, rgba(3,0,10,0.9) 0%, transparent 100%);
+    pointer-events: none;
+  }
+
+  #logo {
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 900;
+    font-size: 1.4rem;
+    letter-spacing: 0.3em;
+    color: var(--neon-cyan);
+    text-shadow: 0 0 20px var(--neon-cyan), 0 0 40px rgba(0,245,255,0.3);
+  }
+
+  #logo span { color: var(--neon-pink); text-shadow: 0 0 20px var(--neon-pink); }
+
+  #status-bar {
+    font-size: 0.7rem;
+    letter-spacing: 0.15em;
+    color: var(--text-dim);
+    text-align: right;
+    line-height: 1.6;
+  }
+
+  #status-bar .active { color: var(--neon-green); text-shadow: 0 0 8px var(--neon-green); }
+  #status-bar .gesture-label { color: var(--neon-pink); text-shadow: 0 0 8px var(--neon-pink); font-weight: bold; }
+
+  /* ── Bottom Controls ── */
+  #controls {
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    padding: 20px 28px;
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    background: linear-gradient(0deg, rgba(3,0,10,0.9) 0%, transparent 100%);
+    pointer-events: all;
+  }
+
+  .btn-group { display: flex; gap: 10px; align-items: center; }
+
+  .btn {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 0.68rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    padding: 9px 18px;
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+    color: var(--neon-cyan);
+    cursor: pointer;
+    transition: all 0.2s;
+    clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px));
+    position: relative;
+    overflow: hidden;
+  }
+
+  .btn::before {
+    content: '';
+    position: absolute; inset: 0;
+    background: linear-gradient(135deg, transparent 0%, rgba(0,245,255,0.08) 100%);
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+
+  .btn:hover { border-color: var(--neon-cyan); color: #fff; text-shadow: 0 0 8px var(--neon-cyan); box-shadow: 0 0 16px rgba(0,245,255,0.2), inset 0 0 16px rgba(0,245,255,0.04); }
+  .btn:hover::before { opacity: 1; }
+  .btn.active { border-color: var(--neon-pink); color: var(--neon-pink); text-shadow: 0 0 8px var(--neon-pink); box-shadow: 0 0 16px rgba(255,0,110,0.3); }
+
+  .btn-primary {
+    background: linear-gradient(135deg, rgba(0,245,255,0.1), rgba(0,245,255,0.02));
+    border-color: var(--neon-cyan);
+    box-shadow: 0 0 20px rgba(0,245,255,0.15);
+  }
+
+  /* Mode pill */
+  #mode-display {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 0.65rem;
+    letter-spacing: 0.2em;
+    color: var(--neon-purple);
+    text-shadow: 0 0 10px var(--neon-purple);
+    text-transform: uppercase;
+    opacity: 0.8;
+    align-self: center;
+  }
+
+  /* ── Gesture Legend ── */
+  #legend {
+    position: absolute;
+    left: 28px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    pointer-events: none;
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 0.62rem;
+    letter-spacing: 0.1em;
+    color: var(--text-dim);
+    transition: color 0.3s;
+  }
+
+  .legend-item.glow { color: var(--neon-cyan); text-shadow: 0 0 6px var(--neon-cyan); }
+
+  .legend-icon {
+    width: 28px; height: 28px;
+    border: 1px solid currentColor;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px;
+    clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+    background: rgba(0,0,0,0.4);
+    flex-shrink: 0;
+  }
+
+  /* ── Onboarding overlay ── */
+  #onboarding {
+    position: fixed; inset: 0;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: radial-gradient(ellipse at center, rgba(3,0,10,0.92) 60%, rgba(139,0,255,0.08) 100%);
+    backdrop-filter: blur(4px);
+    transition: opacity 0.8s, visibility 0.8s;
+  }
+
+  #onboarding.hidden { opacity: 0; visibility: hidden; }
+
+  .onboarding-box {
+    text-align: center;
+    max-width: 480px;
+    padding: 48px 40px;
+    border: 1px solid var(--panel-border);
+    background: var(--panel-bg);
+    clip-path: polygon(0 0, calc(100% - 24px) 0, 100% 24px, 100% 100%, 24px 100%, 0 calc(100% - 24px));
+    box-shadow: 0 0 60px rgba(0,245,255,0.06), 0 0 120px rgba(139,0,255,0.04);
+    position: relative;
+  }
+
+  .onboarding-box::before {
+    content: '';
+    position: absolute;
+    top: 0; right: 0; bottom: 0; left: 0;
+    background: linear-gradient(135deg, rgba(0,245,255,0.02) 0%, transparent 60%);
+    pointer-events: none;
+  }
+
+  .onboarding-title {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 2.2rem;
+    font-weight: 900;
+    letter-spacing: 0.25em;
+    color: var(--neon-cyan);
+    text-shadow: 0 0 30px var(--neon-cyan), 0 0 60px rgba(0,245,255,0.3);
+    margin-bottom: 6px;
+  }
+
+  .onboarding-sub {
+    font-size: 0.72rem;
+    letter-spacing: 0.2em;
+    color: var(--neon-pink);
+    text-shadow: 0 0 10px var(--neon-pink);
+    margin-bottom: 36px;
+    text-transform: uppercase;
+  }
+
+  .onboarding-desc {
+    font-size: 0.78rem;
+    line-height: 1.8;
+    color: var(--text-dim);
+    margin-bottom: 36px;
+  }
+
+  .onboarding-desc strong { color: var(--neon-cyan); }
+
+  #start-btn {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 0.9rem;
+    font-weight: 700;
+    letter-spacing: 0.3em;
+    padding: 16px 48px;
+    background: transparent;
+    border: 2px solid var(--neon-cyan);
+    color: var(--neon-cyan);
+    cursor: pointer;
+    text-transform: uppercase;
+    clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px));
+    transition: all 0.3s;
+    box-shadow: 0 0 30px rgba(0,245,255,0.2);
+    position: relative;
+    overflow: hidden;
+  }
+
+  #start-btn::after {
+    content: '';
+    position: absolute; inset: 0;
+    background: linear-gradient(135deg, rgba(0,245,255,0.15), transparent);
+    opacity: 0; transition: opacity 0.3s;
+  }
+
+  #start-btn:hover { background: rgba(0,245,255,0.08); box-shadow: 0 0 50px rgba(0,245,255,0.4); transform: translateY(-2px); }
+  #start-btn:hover::after { opacity: 1; }
+
+  /* Loading state */
+  #loading {
+    position: fixed; inset: 0;
+    z-index: 40;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    background: var(--bg);
+    transition: opacity 0.5s, visibility 0.5s;
+  }
+
+  #loading.hidden { opacity: 0; visibility: hidden; }
+
+  .loading-ring {
+    width: 80px; height: 80px;
+    border: 2px solid rgba(0,245,255,0.1);
+    border-top-color: var(--neon-cyan);
+    border-right-color: var(--neon-pink);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin-bottom: 24px;
+    box-shadow: 0 0 30px rgba(0,245,255,0.2);
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .loading-text {
+    font-size: 0.7rem; letter-spacing: 0.3em;
+    color: var(--text-dim);
+    animation: pulse 1.5s ease-in-out infinite;
+  }
+
+  @keyframes pulse { 0%,100%{opacity:0.4} 50%{opacity:1} }
+
+  /* Gesture flash overlay */
+  #gesture-flash {
+    position: fixed; inset: 0;
+    z-index: 5;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.1s;
+  }
+
+  /* Skeleton toggle */
+  #skeleton-btn { pointer-events: all; }
+</style>
+</head>
+<body>
+
+<!-- Video feed -->
+<video id="video" autoplay muted playsinline></video>
+
+<!-- Canvases -->
+<canvas id="canvas-main"></canvas>
+<canvas id="canvas-skeleton"></canvas>
+
+<!-- Gesture flash -->
+<div id="gesture-flash"></div>
+
+<!-- UI -->
+<div id="ui">
+  <div id="header">
+    <div id="logo">GEST<span>UR</span>AL</div>
+    <div id="status-bar">
+      <div>HANDS: <span id="hand-count" class="active">—</span></div>
+      <div>GESTURE: <span id="gesture-name" class="gesture-label">SCANNING</span></div>
+      <div>FPS: <span id="fps-display" class="active">—</span></div>
+    </div>
+  </div>
+
+  <div id="legend">
+    <div class="legend-item" id="leg-palm">
+      <div class="legend-icon">✋</div><span>OPEN PALM → PARTICLES</span>
+    </div>
+    <div class="legend-item" id="leg-pinch">
+      <div class="legend-icon">🤌</div><span>PINCH → ENERGY LINE</span>
+    </div>
+    <div class="legend-item" id="leg-fist">
+      <div class="legend-icon">✊</div><span>FIST → FREEZE</span>
+    </div>
+    <div class="legend-item" id="leg-swipe">
+      <div class="legend-icon">👋</div><span>SWIPE → EXPLOSION</span>
+    </div>
+    <div class="legend-item" id="leg-point">
+      <div class="legend-icon">☝️</div><span>POINT → BEAM</span>
+    </div>
+  </div>
+
+  <div id="controls">
+    <div class="btn-group">
+      <button class="btn btn-primary" id="fullscreen-btn">⛶ FULLSCREEN</button>
+      <button class="btn" id="skeleton-btn">◈ SKELETON: OFF</button>
+    </div>
+    <div id="mode-display">MODE: <span id="mode-name">PARTICLE UNIVERSE</span></div>
+    <div class="btn-group">
+      <button class="btn" id="mode-btn">⬡ CHANGE MODE</button>
+      <button class="btn" id="screenshot-btn">◉ SCREENSHOT</button>
+    </div>
+  </div>
+</div>
+
+<!-- Loading -->
+<div id="loading">
+  <div class="loading-ring"></div>
+  <div class="loading-text">INITIALIZING NEURAL VISION ENGINE...</div>
+</div>
+
+<!-- Onboarding -->
+<div id="onboarding">
+  <div class="onboarding-box">
+    <div class="onboarding-title">GESTURAL</div>
+    <div class="onboarding-sub">Hand Tracking Visual Engine v2.0</div>
+    <div class="onboarding-desc">
+      Transform your hands into a <strong>cyberpunk visual synthesizer</strong>.<br><br>
+      ✋ Open palm spawns <strong>glowing particles</strong><br>
+      🤌 Pinch creates <strong>neon energy beams</strong><br>
+      ✊ Fist <strong>freezes the universe</strong><br>
+      👋 Swipe triggers <strong>particle explosions</strong><br>
+      ☝️ Point fires a <strong>laser beam</strong>
+    </div>
+    <button id="start-btn">ACTIVATE CAMERA</button>
+  </div>
+</div>
+
+<!-- MediaPipe + TF.js via CDN -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/hands.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3/camera_utils.js" crossorigin="anonymous"></script>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+//  GESTURAL — Hand Tracking Visual Engine
+// ═══════════════════════════════════════════════════════════════
+
+const video = document.getElementById('video');
+const mainCanvas = document.getElementById('canvas-main');
+const skelCanvas = document.getElementById('canvas-skeleton');
+const ctx = mainCanvas.getContext('2d');
+const skelCtx = skelCanvas.getContext('2d');
+
+// ── State ──────────────────────────────────────────────────────
+const state = {
+  mode: 0,  // 0=particle universe, 1=liquid waves, 2=neon trails, 3=galaxy
+  modes: ['PARTICLE UNIVERSE', 'LIQUID WAVES', 'NEON TRAILS', 'GALAXY MODE'],
+  skeleton: false,
+  frozen: false,
+  hands: [],
+  gestureActive: {},
+  frame: 0,
+  fps: 0,
+  lastFpsTime: 0,
+  fpsFrames: 0,
+};
+
+// ── Resize ─────────────────────────────────────────────────────
+function resize() {
+  mainCanvas.width = skelCanvas.width = window.innerWidth;
+  mainCanvas.height = skelCanvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener('resize', resize);
+
+// ══════════════════════════════════════════════════════════════
+//  PARTICLE SYSTEM
+// ══════════════════════════════════════════════════════════════
+
+const NEON_COLORS = [
+  '#00f5ff', '#ff006e', '#8b00ff', '#39ff14', '#ff6600',
+  '#ff00ff', '#00ffaa', '#ffcc00', '#0066ff', '#ff3399'
+];
+
+class Particle {
+  constructor(x, y, vx, vy, opts = {}) {
+    this.x = x; this.y = y;
+    this.vx = vx; this.vy = vy;
+    this.life = opts.life || 1;
+    this.decay = opts.decay || 0.012 + Math.random() * 0.015;
+    this.size = opts.size || 2 + Math.random() * 4;
+    this.color = opts.color || NEON_COLORS[Math.floor(Math.random() * NEON_COLORS.length)];
+    this.glow = opts.glow || 12;
+    this.trail = opts.trail || [];
+    this.maxTrail = opts.maxTrail || 8;
+    this.gravity = opts.gravity || 0;
+    this.spin = (Math.random() - 0.5) * 0.2;
+    this.wobble = Math.random() * Math.PI * 2;
+    this.wobbleSpeed = 0.05 + Math.random() * 0.1;
+    this.pulsing = opts.pulsing || false;
+    this.type = opts.type || 'circle'; // circle, star, square
+    this.attractTo = null;
+    this.orbiting = opts.orbiting || false;
+    this.orbitAngle = Math.random() * Math.PI * 2;
+    this.orbitSpeed = (Math.random() - 0.5) * 0.04;
+    this.orbitRadius = 30 + Math.random() * 80;
+  }
+
+  update() {
+    this.trail.push({ x: this.x, y: this.y });
+    if (this.trail.length > this.maxTrail) this.trail.shift();
+
+    if (this.attractTo) {
+      const dx = this.attractTo.x - this.x;
+      const dy = this.attractTo.y - this.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist > 5) {
+        this.vx += (dx / dist) * 0.4;
+        this.vy += (dy / dist) * 0.4;
+      }
+    }
+
+    this.wobble += this.wobbleSpeed;
+    this.x += this.vx + Math.sin(this.wobble) * 0.3;
+    this.y += this.vy;
+    this.vy += this.gravity;
+    this.vx *= 0.98;
+    this.vy *= 0.98;
+    this.life -= this.decay;
+    this.size *= 0.995;
+  }
+
+  draw(ctx) {
+    if (this.life <= 0) return;
+    const alpha = Math.max(0, this.life);
+
+    // Draw trail
+    if (this.trail.length > 1) {
+      ctx.beginPath();
+      ctx.moveTo(this.trail[0].x, this.trail[0].y);
+      for (let i = 1; i < this.trail.length; i++) {
+        ctx.lineTo(this.trail[i].x, this.trail[i].y);
+      }
+      ctx.strokeStyle = this.color;
+      ctx.globalAlpha = alpha * 0.25;
+      ctx.lineWidth = this.size * 0.5;
+      ctx.stroke();
+    }
+
+    ctx.globalAlpha = alpha;
+    ctx.shadowColor = this.color;
+    ctx.shadowBlur = this.glow * (this.pulsing ? (0.7 + 0.3 * Math.sin(this.wobble * 2)) : 1);
+
+    if (this.type === 'star') {
+      drawStar(ctx, this.x, this.y, this.size * 2, this.size, 5, this.color);
+    } else if (this.type === 'square') {
+      ctx.save();
+      ctx.translate(this.x, this.y);
+      ctx.rotate(this.wobble);
+      ctx.fillStyle = this.color;
+      ctx.fillRect(-this.size / 2, -this.size / 2, this.size, this.size);
+      ctx.restore();
+    } else {
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+      ctx.fillStyle = this.color;
+      ctx.fill();
+    }
+
+    ctx.globalAlpha = 1;
+    ctx.shadowBlur = 0;
+  }
+}
+
+function drawStar(ctx, cx, cy, outerR, innerR, points, color) {
+  ctx.beginPath();
+  for (let i = 0; i < points * 2; i++) {
+    const r = i % 2 === 0 ? outerR : innerR;
+    const angle = (i * Math.PI) / points - Math.PI / 2;
+    ctx.lineTo(cx + r * Math.cos(angle), cy + r * Math.sin(angle));
+  }
+  ctx.closePath();
+  ctx.fillStyle = color;
+  ctx.fill();
+}
+
+let particles = [];
+
+function spawnParticles(x, y, count, opts = {}) {
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = opts.speed || (1 + Math.random() * 3);
+    particles.push(new Particle(
+      x + (Math.random() - 0.5) * 20,
+      y + (Math.random() - 0.5) * 20,
+      Math.cos(angle) * speed,
+      Math.sin(angle) * speed,
+      opts
+    ));
+  }
+}
+
+function explodeParticles(x, y, count = 80) {
+  for (let i = 0; i < count; i++) {
+    const angle = (i / count) * Math.PI * 2;
+    const speed = 4 + Math.random() * 8;
+    const color = NEON_COLORS[Math.floor(Math.random() * NEON_COLORS.length)];
+    particles.push(new Particle(x, y, Math.cos(angle) * speed, Math.sin(angle) * speed, {
+      color, life: 1, decay: 0.015, size: 3 + Math.random() * 5,
+      glow: 20, maxTrail: 12, gravity: 0.08
+    }));
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
+//  ENERGY LINES
+// ══════════════════════════════════════════════════════════════
+
+let energyLines = [];
+
+class EnergyLine {
+  constructor(x1, y1, x2, y2, color) {
+    this.x1 = x1; this.y1 = y1;
+    this.x2 = x2; this.y2 = y2;
+    this.life = 1;
+    this.color = color || '#00f5ff';
+    this.width = 2 + Math.random() * 2;
+    this.segments = 8;
+    this.noiseOffset = Math.random() * 1000;
+  }
+
+  update() {
+    this.noiseOffset += 0.05;
+    this.life -= 0.03;
+  }
+
+  draw(ctx) {
+    if (this.life <= 0) return;
+    ctx.globalAlpha = this.life;
+    ctx.shadowColor = this.color;
+    ctx.shadowBlur = 20;
+    ctx.strokeStyle = this.color;
+    ctx.lineWidth = this.width;
+
+    ctx.beginPath();
+    const dx = (this.x2 - this.x1) / this.segments;
+    const dy = (this.y2 - this.y1) / this.segments;
+    ctx.moveTo(this.x1, this.y1);
+    for (let i = 1; i <= this.segments; i++) {
+      const nx = this.x1 + dx * i + (Math.random() - 0.5) * 20;
+      const ny = this.y1 + dy * i + (Math.random() - 0.5) * 20;
+      ctx.lineTo(i === this.segments ? this.x2 : nx, i === this.segments ? this.y2 : ny);
+    }
+    ctx.stroke();
+
+    // Glow dots at ends
+    [{ x: this.x1, y: this.y1 }, { x: this.x2, y: this.y2 }].forEach(pt => {
+      ctx.beginPath();
+      ctx.arc(pt.x, pt.y, 5 * this.life, 0, Math.PI * 2);
+      ctx.fillStyle = this.color;
+      ctx.fill();
+    });
+
+    ctx.globalAlpha = 1;
+    ctx.shadowBlur = 0;
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
+//  WAVES (liquid mode)
+// ══════════════════════════════════════════════════════════════
+
+let wavePoints = [];
+let waveTime = 0;
+
+function initWaves() {
+  wavePoints = [];
+  const count = 5;
+  for (let i = 0; i < count; i++) {
+    wavePoints.push({
+      color: NEON_COLORS[i % NEON_COLORS.length],
+      speed: 0.008 + i * 0.002,
+      amplitude: 80 + i * 30,
+      freq: 0.003 + i * 0.001,
+      offset: (i / count) * Math.PI * 2,
+      y: window.innerHeight * (0.3 + i * 0.12),
+      life: 0.6
+    });
+  }
+}
+initWaves();
+
+function drawWaves(ctx, handPos) {
+  waveTime += 0.01;
+  wavePoints.forEach(w => {
+    ctx.beginPath();
+    ctx.shadowColor = w.color;
+    ctx.shadowBlur = 18;
+    ctx.strokeStyle = w.color;
+    ctx.lineWidth = 1.5;
+    ctx.globalAlpha = w.life;
+
+    let baseY = w.y;
+    // React to hand y position
+    if (handPos.length > 0) {
+      const hy = handPos[0].y * window.innerHeight;
+      const influence = Math.max(0, 1 - Math.abs(hy - baseY) / 200);
+      baseY += (hy - baseY) * influence * 0.3;
+    }
+
+    ctx.moveTo(0, baseY);
+    for (let x = 0; x <= window.innerWidth; x += 4) {
+      const y = baseY + Math.sin(x * w.freq + waveTime * w.speed * 60 + w.offset) * w.amplitude
+              + Math.sin(x * w.freq * 2.5 + waveTime * w.speed * 90) * (w.amplitude * 0.3);
+      ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    ctx.shadowBlur = 0;
+  });
+}
+
+// ══════════════════════════════════════════════════════════════
+//  TRAILS (neon mode)
+// ══════════════════════════════════════════════════════════════
+
+let fingerTrails = {};
+
+function updateTrails(hands) {
+  const activeKeys = new Set();
+  hands.forEach((hand, hi) => {
+    [4, 8, 12, 16, 20].forEach((fi, idx) => {
+      const key = `${hi}_${fi}`;
+      activeKeys.add(key);
+      const lm = hand.landmarks[fi];
+      const x = (1 - lm.x) * window.innerWidth;
+      const y = lm.y * window.innerHeight;
+      if (!fingerTrails[key]) {
+        fingerTrails[key] = {
+          points: [], color: NEON_COLORS[(hi * 5 + idx) % NEON_COLORS.length],
+          maxLen: 60
+        };
+      }
+      fingerTrails[key].points.push({ x, y });
+      if (fingerTrails[key].points.length > fingerTrails[key].maxLen) {
+        fingerTrails[key].points.shift();
+      }
+    });
+  });
+  // Fade out inactive trails
+  Object.keys(fingerTrails).forEach(k => {
+    if (!activeKeys.has(k)) {
+      fingerTrails[k].points.shift();
+      if (fingerTrails[k].points.length === 0) delete fingerTrails[k];
+    }
+  });
+}
+
+function drawTrails(ctx) {
+  Object.values(fingerTrails).forEach(trail => {
+    if (trail.points.length < 2) return;
+    ctx.beginPath();
+    ctx.moveTo(trail.points[0].x, trail.points[0].y);
+    for (let i = 1; i < trail.points.length; i++) {
+      ctx.lineTo(trail.points[i].x, trail.points[i].y);
+    }
+    ctx.strokeStyle = trail.color;
+    ctx.lineWidth = 2.5;
+    ctx.globalAlpha = 0.85;
+    ctx.shadowColor = trail.color;
+    ctx.shadowBlur = 15;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.stroke();
+    ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+
+    // Tip dot
+    const tip = trail.points[trail.points.length - 1];
+    ctx.beginPath();
+    ctx.arc(tip.x, tip.y, 5, 0, Math.PI * 2);
+    ctx.fillStyle = trail.color;
+    ctx.shadowBlur = 20;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  });
+}
+
+// ══════════════════════════════════════════════════════════════
+//  GALAXY MODE
+// ══════════════════════════════════════════════════════════════
+
+let stars = [];
+function initStars() {
+  stars = [];
+  for (let i = 0; i < 200; i++) {
+    stars.push({
+      x: Math.random() * window.innerWidth,
+      y: Math.random() * window.innerHeight,
+      z: Math.random() * 3,
+      color: NEON_COLORS[Math.floor(Math.random() * NEON_COLORS.length)],
+      size: Math.random() * 2,
+      speed: 0.2 + Math.random() * 0.8,
+      angle: Math.random() * Math.PI * 2,
+      orbitX: window.innerWidth / 2,
+      orbitY: window.innerHeight / 2,
+      orbitR: 100 + Math.random() * 400,
+    });
+  }
+}
+initStars();
+
+function updateGalaxy(hands) {
+  const cx = window.innerWidth / 2, cy = window.innerHeight / 2;
+  let attractX = cx, attractY = cy;
+
+  if (hands.length > 0) {
+    const wrist = hands[0].landmarks[0];
+    attractX = (1 - wrist.x) * window.innerWidth;
+    attractY = wrist.y * window.innerHeight;
+  }
+
+  stars.forEach(s => {
+    // Orbit around attract point
+    s.orbitX += (attractX - s.orbitX) * 0.01;
+    s.orbitY += (attractY - s.orbitY) * 0.01;
+    s.angle += s.speed * 0.008;
+    s.x = s.orbitX + Math.cos(s.angle) * s.orbitR;
+    s.y = s.orbitY + Math.sin(s.angle) * s.orbitR * 0.5;
+  });
+}
+
+function drawGalaxy(ctx) {
+  stars.forEach(s => {
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.size + s.z * 0.5, 0, Math.PI * 2);
+    ctx.fillStyle = s.color;
+    ctx.shadowColor = s.color;
+    ctx.shadowBlur = 6 + s.z * 4;
+    ctx.globalAlpha = 0.7 + s.z * 0.1;
+    ctx.fill();
+  });
+  ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+}
+
+// ══════════════════════════════════════════════════════════════
+//  GESTURE DETECTION
+// ══════════════════════════════════════════════════════════════
+
+function getFingerTip(lms, finger) {
+  const tips = { thumb: 4, index: 8, middle: 12, ring: 16, pinky: 20 };
+  return lms[tips[finger]];
+}
+
+function getFingerBase(lms, finger) {
+  const bases = { thumb: 2, index: 5, middle: 9, ring: 13, pinky: 17 };
+  return lms[bases[finger]];
+}
+
+function isFingerExtended(lms, finger) {
+  const tipIdx = { thumb: 4, index: 8, middle: 12, ring: 16, pinky: 20 };
+  const pipIdx = { thumb: 3, index: 6, middle: 10, ring: 14, pinky: 18 };
+
+  if (finger === 'thumb') {
+    // Thumb: compare tip x vs mcp x (mirrored)
+    return Math.abs(lms[4].x - lms[2].x) > 0.04;
+  }
+  const tip = lms[tipIdx[finger]];
+  const pip = lms[pipIdx[finger]];
+  return tip.y < pip.y;
+}
+
+function detectGesture(lms) {
+  const fingers = ['thumb', 'index', 'middle', 'ring', 'pinky'];
+  const extended = {};
+  fingers.forEach(f => extended[f] = isFingerExtended(lms, f));
+
+  const extCount = Object.values(extended).filter(Boolean).length;
+
+  // Fist: no fingers extended
+  if (extCount <= 1 && !extended.index && !extended.middle) return 'fist';
+
+  // Pinch: thumb and index close, others folded
+  const thumb = lms[4], index = lms[8];
+  const pinchDist = Math.hypot(thumb.x - index.x, thumb.y - index.y);
+  if (pinchDist < 0.06 && !extended.middle && !extended.ring) return 'pinch';
+
+  // Point: only index extended
+  if (extended.index && !extended.middle && !extended.ring && !extended.pinky) return 'point';
+
+  // Open palm: 4+ fingers extended
+  if (extCount >= 4) return 'palm';
+
+  // Peace: index + middle
+  if (extended.index && extended.middle && !extended.ring && !extended.pinky) return 'peace';
+
+  return 'unknown';
+}
+
+// Swipe detection
+let swipeHistory = {};
+function detectSwipe(handIdx, wrist) {
+  const key = `swipe_${handIdx}`;
+  if (!swipeHistory[key]) swipeHistory[key] = [];
+  swipeHistory[key].push({ x: wrist.x, y: wrist.y, t: Date.now() });
+  if (swipeHistory[key].length > 12) swipeHistory[key].shift();
+
+  const pts = swipeHistory[key];
+  if (pts.length < 8) return false;
+
+  const dx = pts[pts.length - 1].x - pts[0].x;
+  const dt = pts[pts.length - 1].t - pts[0].t;
+  return Math.abs(dx) > 0.15 && dt < 400;
+}
+
+// ══════════════════════════════════════════════════════════════
+//  SKELETON RENDERER
+// ══════════════════════════════════════════════════════════════
+
+const CONNECTIONS = [
+  [0,1],[1,2],[2,3],[3,4],
+  [0,5],[5,6],[6,7],[7,8],
+  [0,9],[9,10],[10,11],[11,12],
+  [0,13],[13,14],[14,15],[15,16],
+  [0,17],[17,18],[18,19],[19,20],
+  [5,9],[9,13],[13,17]
+];
+
+function drawSkeleton(lms, color) {
+  const W = window.innerWidth, H = window.innerHeight;
+
+  CONNECTIONS.forEach(([a, b]) => {
+    const ax = (1 - lms[a].x) * W, ay = lms[a].y * H;
+    const bx = (1 - lms[b].x) * W, by = lms[b].y * H;
+    skelCtx.beginPath();
+    skelCtx.moveTo(ax, ay); skelCtx.lineTo(bx, by);
+    skelCtx.strokeStyle = color;
+    skelCtx.lineWidth = 1.5;
+    skelCtx.globalAlpha = 0.7;
+    skelCtx.shadowColor = color;
+    skelCtx.shadowBlur = 6;
+    skelCtx.stroke();
+  });
+
+  lms.forEach((lm, i) => {
+    const x = (1 - lm.x) * W, y = lm.y * H;
+    skelCtx.beginPath();
+    skelCtx.arc(x, y, i === 0 ? 5 : 3, 0, Math.PI * 2);
+    skelCtx.fillStyle = i === 0 ? '#fff' : color;
+    skelCtx.globalAlpha = 0.9;
+    skelCtx.fill();
+  });
+
+  skelCtx.globalAlpha = 1; skelCtx.shadowBlur = 0;
+}
+
+// ══════════════════════════════════════════════════════════════
+//  BEAM EFFECT (point gesture)
+// ══════════════════════════════════════════════════════════════
+
+let beams = [];
+class Beam {
+  constructor(x1, y1, x2, y2, color) {
+    this.x1 = x1; this.y1 = y1;
+    this.x2 = x2; this.y2 = y2;
+    this.color = color; this.life = 1;
+    this.width = 3;
+  }
+  update() { this.life -= 0.04; }
+  draw(ctx) {
+    if (this.life <= 0) return;
+    const grad = ctx.createLinearGradient(this.x1, this.y1, this.x2, this.y2);
+    grad.addColorStop(0, this.color);
+    grad.addColorStop(1, 'transparent');
+    ctx.beginPath();
+    ctx.moveTo(this.x1, this.y1);
+    ctx.lineTo(this.x2, this.y2);
+    ctx.strokeStyle = grad;
+    ctx.lineWidth = this.width * this.life;
+    ctx.globalAlpha = this.life;
+    ctx.shadowColor = this.color;
+    ctx.shadowBlur = 25;
+    ctx.stroke();
+    ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
+//  RENDER LOOP
+// ══════════════════════════════════════════════════════════════
+
+let lastTime = 0;
+
+function render(ts) {
+  requestAnimationFrame(render);
+
+  const dt = ts - lastTime;
+  lastTime = ts;
+  state.frame++;
+
+  // FPS counter
+  state.fpsFrames++;
+  if (ts - state.lastFpsTime >= 1000) {
+    state.fps = state.fpsFrames;
+    state.fpsFrames = 0;
+    state.lastFpsTime = ts;
+    document.getElementById('fps-display').textContent = state.fps;
+  }
+
+  const W = window.innerWidth, H = window.innerHeight;
+
+  // ── Background fade ──
+  if (state.frozen) {
+    ctx.fillStyle = 'rgba(3,0,10,0.05)';
+  } else {
+    ctx.fillStyle = state.mode === 1 ? 'rgba(0,5,15,0.25)' :
+                    state.mode === 2 ? 'rgba(3,0,10,0.35)' :
+                    state.mode === 3 ? 'rgba(0,0,8,0.15)' :
+                                       'rgba(3,0,10,0.18)';
+  }
+  ctx.fillRect(0, 0, W, H);
+
+  if (!state.frozen) {
+    // ── Mode-specific drawing ──
+    if (state.mode === 0) {
+      // Particle Universe
+      particles.forEach(p => { p.update(); p.draw(ctx); });
+      particles = particles.filter(p => p.life > 0);
+      energyLines.forEach(l => { l.update(); l.draw(ctx); });
+      energyLines = energyLines.filter(l => l.life > 0);
+      beams.forEach(b => { b.update(); b.draw(ctx); });
+      beams = beams.filter(b => b.life > 0);
+    } else if (state.mode === 1) {
+      // Liquid Waves
+      const handPos = state.hands.map(h => h.landmarks[0]);
+      drawWaves(ctx, handPos);
+      // Also allow particles in this mode
+      particles.forEach(p => { p.update(); p.draw(ctx); });
+      particles = particles.filter(p => p.life > 0);
+    } else if (state.mode === 2) {
+      // Neon Trails
+      updateTrails(state.hands);
+      drawTrails(ctx);
+      particles.forEach(p => { p.update(); p.draw(ctx); });
+      particles = particles.filter(p => p.life > 0);
+    } else if (state.mode === 3) {
+      // Galaxy
+      updateGalaxy(state.hands);
+      drawGalaxy(ctx);
+      particles.forEach(p => { p.update(); p.draw(ctx); });
+      particles = particles.filter(p => p.life > 0);
+      energyLines.forEach(l => { l.update(); l.draw(ctx); });
+      energyLines = energyLines.filter(l => l.life > 0);
+    }
+  } else {
+    // Frozen: draw dim overlay
+    ctx.fillStyle = 'rgba(0,245,255,0.02)';
+    ctx.fillRect(0, 0, W, H);
+    // Still draw existing particles frozen
+    particles.forEach(p => p.draw(ctx));
+    // Freeze glow text
+    ctx.font = 'bold 1.2rem "Share Tech Mono"';
+    ctx.fillStyle = 'rgba(0,245,255,0.4)';
+    ctx.textAlign = 'center';
+    ctx.fillText('[ FROZEN ]', W / 2, 60);
+    ctx.textAlign = 'left';
+  }
+
+  // Skeleton
+  skelCtx.clearRect(0, 0, W, H);
+  if (state.skeleton) {
+    const colors = [NEON_COLORS[0], NEON_COLORS[1]];
+    state.hands.forEach((hand, i) => drawSkeleton(hand.landmarks, colors[i % 2]));
+  }
+
+  // Ambient glow in corners
+  if (state.frame % 3 === 0) {
+    const grd = ctx.createRadialGradient(0, H, 0, 0, H, 300);
+    grd.addColorStop(0, 'rgba(0,245,255,0.012)');
+    grd.addColorStop(1, 'transparent');
+    ctx.fillStyle = grd;
+    ctx.fillRect(0, 0, W, H);
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
+//  GESTURE HANDLER (called from MediaPipe results)
+// ══════════════════════════════════════════════════════════════
+
+let lastGestures = {};
+let lastSwipeSpawn = 0;
+let gestureFrames = {};
+
+function handleGestures(hands) {
+  state.hands = hands;
+  document.getElementById('hand-count').textContent = hands.length;
+
+  if (hands.length === 0) {
+    document.getElementById('gesture-name').textContent = '—';
+    state.frozen = false;
+    return;
+  }
+
+  const W = window.innerWidth, H = window.innerHeight;
+  let anyFist = false;
+  const gestures = [];
+
+  hands.forEach((hand, hi) => {
+    const lms = hand.landmarks;
+    const gesture = detectGesture(lms);
+    gestures.push(gesture);
+
+    const wrist = lms[0];
+    const wx = (1 - wrist.x) * W;
+    const wy = wrist.y * H;
+
+    // Highlight legend
+    const legMap = { palm: 'leg-palm', pinch: 'leg-pinch', fist: 'leg-fist', point: 'leg-point' };
+    Object.values({ 'leg-palm': null, 'leg-pinch': null, 'leg-fist': null, 'leg-point': null, 'leg-swipe': null })
+      .forEach((_, k) => document.getElementById(k) && document.getElementById(k).classList.remove('glow'));
+    if (legMap[gesture]) {
+      const el = document.getElementById(legMap[gesture]);
+      if (el) el.classList.add('glow');
+    }
+
+    switch (gesture) {
+      case 'fist':
+        anyFist = true;
+        break;
+
+      case 'palm': {
+        // Spawn glowing particles from each finger tip
+        const tips = [4, 8, 12, 16, 20];
+        if (state.frame % 3 === 0) {
+          tips.forEach(ti => {
+            const lm = lms[ti];
+            const x = (1 - lm.x) * W, y = lm.y * H;
+            const hue = (hi * 180 + ti * 15) % 360;
+            const speed = { speed: 1.5 + Math.random() * 2.5, life: 0.9, decay: 0.008, glow: 18, maxTrail: 10, pulsing: true };
+            spawnParticles(x, y, 2, { ...speed, color: NEON_COLORS[(hi * 5 + ti) % NEON_COLORS.length] });
+          });
+        }
+        // Ambient palm glow
+        if (state.frame % 6 === 0) {
+          spawnParticles(wx, wy, 3, {
+            speed: 2, life: 0.7, decay: 0.01, glow: 25, type: 'star',
+            color: NEON_COLORS[Math.floor(Math.random() * NEON_COLORS.length)], maxTrail: 6
+          });
+        }
+        break;
+      }
+
+      case 'pinch': {
+        const thumb = lms[4], idx = lms[8];
+        const tx = (1 - thumb.x) * W, ty = thumb.y * H;
+        const ix = (1 - idx.x) * W, iy = idx.y * H;
+        if (state.frame % 2 === 0) {
+          energyLines.push(new EnergyLine(tx, ty, ix, iy, NEON_COLORS[hi * 2]));
+          // Spark particles at pinch point
+          const mx = (tx + ix) / 2, my = (ty + iy) / 2;
+          spawnParticles(mx, my, 3, {
+            speed: 3, life: 0.8, decay: 0.04, glow: 20, size: 2,
+            color: NEON_COLORS[hi * 3 % NEON_COLORS.length]
+          });
+        }
+        break;
+      }
+
+      case 'point': {
+        const tipLm = lms[8];
+        const tx = (1 - tipLm.x) * W, ty = tipLm.y * H;
+        const pipLm = lms[6];
+        const px = (1 - pipLm.x) * W, py = pipLm.y * H;
+        const dx = tx - px, dy = ty - py;
+        const len = Math.hypot(dx, dy);
+        const nx = dx / len, ny = dy / len;
+        if (state.frame % 2 === 0) {
+          beams.push(new Beam(tx, ty, tx + nx * 600, ty + ny * 600, NEON_COLORS[hi * 4 % NEON_COLORS.length]));
+          spawnParticles(tx + nx * 600, ty + ny * 600, 5, {
+            speed: 4, life: 0.7, decay: 0.05, glow: 15, size: 3,
+            color: NEON_COLORS[hi * 4 % NEON_COLORS.length]
+          });
+        }
+        break;
+      }
+
+      case 'peace': {
+        const i8 = lms[8], i12 = lms[12];
+        const x8 = (1 - i8.x) * W, y8 = i8.y * H;
+        const x12 = (1 - i12.x) * W, y12 = i12.y * H;
+        if (state.frame % 3 === 0) {
+          energyLines.push(new EnergyLine(x8, y8, x12, y12, '#ff00ff'));
+          spawnParticles((x8 + x12) / 2, (y8 + y12) / 2, 4, {
+            speed: 2, life: 0.8, decay: 0.02, glow: 15, color: '#ff00ff'
+          });
+        }
+        break;
+      }
+    }
+
+    // Swipe detection
+    if (gesture !== 'fist') {
+      const isSwipe = detectSwipe(hi, wrist);
+      if (isSwipe && Date.now() - lastSwipeSpawn > 300) {
+        lastSwipeSpawn = Date.now();
+        explodeParticles(wx, wy, 80);
+        // Flash
+        flashScreen(NEON_COLORS[hi]);
+        document.getElementById('gesture-name').textContent = 'SWIPE';
+        const legSwipe = document.getElementById('leg-swipe');
+        if (legSwipe) { legSwipe.classList.add('glow'); setTimeout(() => legSwipe.classList.remove('glow'), 400); }
+        swipeHistory[`swipe_${hi}`] = []; // reset
+      }
+    }
+  });
+
+  state.frozen = anyFist;
+  const gestureLabel = gestures[0] ? gestures[0].toUpperCase() : '—';
+  document.getElementById('gesture-name').textContent = gestureLabel;
+}
+
+function flashScreen(color) {
+  const flash = document.getElementById('gesture-flash');
+  flash.style.background = color;
+  flash.style.opacity = '0.12';
+  setTimeout(() => { flash.style.opacity = '0'; }, 150);
+}
+
+// ══════════════════════════════════════════════════════════════
+//  MEDIAPIPE INIT
+// ══════════════════════════════════════════════════════════════
+
+let mpCamera = null;
+
+async function startCamera() {
+  document.getElementById('loading').classList.remove('hidden');
+  document.getElementById('onboarding').classList.add('hidden');
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }
+    });
+    video.srcObject = stream;
+    await new Promise(r => video.onloadedmetadata = r);
+    video.play();
+
+    // Init MediaPipe Hands
+    const hands = new Hands({
+      locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/${file}`
+    });
+
+    hands.setOptions({
+      maxNumHands: 2,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.7,
+      minTrackingConfidence: 0.6
+    });
+
+    hands.onResults(results => {
+      const detected = results.multiHandLandmarks
+        ? results.multiHandLandmarks.map((lms, i) => ({
+            landmarks: lms,
+            handedness: results.multiHandedness[i]?.label
+          }))
+        : [];
+      handleGestures(detected);
+    });
+
+    mpCamera = new Camera(video, {
+      onFrame: async () => { await hands.send({ image: video }); },
+      width: 1280, height: 720
+    });
+    mpCamera.start();
+
+    // Hide loading
+    setTimeout(() => {
+      document.getElementById('loading').classList.add('hidden');
+    }, 1500);
+
+  } catch (err) {
+    console.error('Camera error:', err);
+    document.getElementById('loading').classList.add('hidden');
+    document.getElementById('onboarding').classList.remove('hidden');
+    alert('Camera access denied or unavailable. Please allow camera permission and reload.');
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
+//  UI CONTROLS
+// ══════════════════════════════════════════════════════════════
+
+document.getElementById('start-btn').addEventListener('click', startCamera);
+
+document.getElementById('mode-btn').addEventListener('click', () => {
+  state.mode = (state.mode + 1) % state.modes.length;
+  document.getElementById('mode-name').textContent = state.modes[state.mode];
+  particles = [];
+  // Spawn transition burst
+  const cx = window.innerWidth / 2, cy = window.innerHeight / 2;
+  explodeParticles(cx, cy, 40);
+});
+
+document.getElementById('skeleton-btn').addEventListener('click', () => {
+  state.skeleton = !state.skeleton;
+  const btn = document.getElementById('skeleton-btn');
+  btn.textContent = `◈ SKELETON: ${state.skeleton ? 'ON' : 'OFF'}`;
+  btn.classList.toggle('active', state.skeleton);
+});
+
+document.getElementById('fullscreen-btn').addEventListener('click', () => {
+  if (!document.fullscreenElement) {
+    document.documentElement.requestFullscreen();
+  } else {
+    document.exitFullscreen();
+  }
+});
+
+document.getElementById('screenshot-btn').addEventListener('click', () => {
+  // Composite all canvases
+  const composite = document.createElement('canvas');
+  composite.width = window.innerWidth;
+  composite.height = window.innerHeight;
+  const cctx = composite.getContext('2d');
+  cctx.fillStyle = '#03000a';
+  cctx.fillRect(0, 0, composite.width, composite.height);
+  cctx.drawImage(video, 0, 0, composite.width, composite.height);
+  cctx.drawImage(mainCanvas, 0, 0);
+  if (state.skeleton) cctx.drawImage(skelCanvas, 0, 0);
+
+  // Add watermark
+  cctx.font = '700 1rem "Share Tech Mono"';
+  cctx.fillStyle = 'rgba(0,245,255,0.5)';
+  cctx.textAlign = 'right';
+  cctx.fillText('GESTURAL', composite.width - 20, composite.height - 16);
+
+  const link = document.createElement('a');
+  link.href = composite.toDataURL('image/png');
+  link.download = `gestural_${Date.now()}.png`;
+  link.click();
+});
+
+// ══════════════════════════════════════════════════════════════
+//  AMBIENT PARTICLES (idle)
+// ══════════════════════════════════════════════════════════════
+
+function spawnAmbient() {
+  if (particles.length < 80 && !state.frozen) {
+    const W = window.innerWidth, H = window.innerHeight;
+    const x = Math.random() * W;
+    const y = H + 10;
+    spawnParticles(x, y, 1, {
+      vx: (Math.random() - 0.5) * 0.5,
+      vy: -1 - Math.random() * 1.5,
+      speed: 0,
+      life: 0.6,
+      decay: 0.005,
+      glow: 10,
+      size: 1 + Math.random() * 2,
+      color: NEON_COLORS[Math.floor(Math.random() * NEON_COLORS.length)],
+      gravity: -0.02,
+      maxTrail: 4
+    });
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
+//  KICK OFF
+// ══════════════════════════════════════════════════════════════
+
+requestAnimationFrame(render);
+setInterval(spawnAmbient, 80);
+
+// Periodic wave color refresh
+setInterval(() => {
+  if (state.mode === 1) {
+    wavePoints.forEach((w, i) => {
+      w.color = NEON_COLORS[(Math.floor(Date.now() / 3000) + i) % NEON_COLORS.length];
+    });
+  }
+}, 3000);
+
+// Particle cap (performance)
+setInterval(() => {
+  if (particles.length > 1200) particles = particles.slice(-800);
+  if (energyLines.length > 60) energyLines = energyLines.slice(-40);
+  if (beams.length > 30) beams = beams.slice(-20);
+}, 500);
+</script>
+</body>
+</html>
